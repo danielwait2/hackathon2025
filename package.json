@@ -1,0 +1,28 @@
+{
+  "name": "anki-flashcard-generator",
+  "version": "1.0.0",
+  "description": "Web application for generating Anki flashcards from notes using AI",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && PORT=5001 npm run dev",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install",
+    "start": "cd server && PORT=5001 npm start",
+    "setup": "npm run install-all && echo 'Setup complete! Copy server/env.example to server/.env and add your API keys.'"
+  },
+  "keywords": [
+    "anki",
+    "flashcards",
+    "ai",
+    "openai",
+    "react",
+    "nodejs"
+  ],
+  "author": "Daniel Wait",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

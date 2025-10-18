@@ -37,31 +37,29 @@ import { useFlashcards, Flashcard } from "../contexts/FlashcardContext";
 const Flashcards: React.FC = () => {
   const {
     flashcards,
+    loading,
+    error,
     fetchFlashcards,
     createFlashcard,
     updateFlashcard,
     deleteFlashcard,
+    bulkDeleteFlashcards,
     pushToAnki,
     getAnkiDecks,
     checkAnkiConnection,
-    loading,
-    error,
   } = useFlashcards();
 
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingFlashcard, setEditingFlashcard] = useState<Flashcard | null>(
     null
   );
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ question: "", answer: "" });
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isAnkiDialogOpen, setIsAnkiDialogOpen] = useState(false);
-  const [editForm, setEditForm] = useState({ question: "", answer: "" });
   const [createForm, setCreateForm] = useState({ question: "", answer: "" });
   const [selectedFlashcards, setSelectedFlashcards] = useState<number[]>([]);
   const [ankiDecks, setAnkiDecks] = useState<string[]>([]);
   const [selectedDeck, setSelectedDeck] = useState("");
-  const [newDeckName, setNewDeckName] = useState("");
-  const [showNewDeckInput, setShowNewDeckInput] = useState(false);
-  const [isPushingToAnki, setIsPushingToAnki] = useState(false);
   const [ankiConnected, setAnkiConnected] = useState<boolean | null>(null);
   const [filterType, setFilterType] = useState<"all" | "generated" | "manual">(
     "all"
@@ -86,10 +84,8 @@ const Flashcards: React.FC = () => {
     setIsEditDialogOpen(true);
   };
 
-  const handleEditSubmit = async () => {
-    if (!editingFlashcard) return;
-
-    try {
+  const handleSaveEdit = async () => {
+    if (editingFlashcard) {
       await updateFlashcard(
         editingFlashcard.id,
         editForm.question,
@@ -97,12 +93,18 @@ const Flashcards: React.FC = () => {
       );
       setIsEditDialogOpen(false);
       setEditingFlashcard(null);
-    } catch (err) {
-      console.error("Error updating flashcard:", err);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (window.confirm("Are you sure you want to delete this flashcard?")) {
+      await deleteFlashcard(id);
     }
   };
 
   const handleCreate = async () => {
+    if (!createForm.question.trim() || !createForm.answer.trim()) return;
+
     try {
       await createFlashcard(createForm.question, createForm.answer);
       setCreateForm({ question: "", answer: "" });
@@ -112,67 +114,21 @@ const Flashcards: React.FC = () => {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    if (window.confirm("Are you sure you want to delete this flashcard?")) {
-      try {
-        await deleteFlashcard(id);
-      } catch (err) {
-        console.error("Error deleting flashcard:", err);
-      }
-    }
-  };
-
-  const handleSelectFlashcard = (id: number) => {
-    setSelectedFlashcards((prev) =>
-      prev.includes(id)
-        ? prev.filter((flashcardId) => flashcardId !== id)
-        : [...prev, id]
-    );
-  };
-
-  const handleSelectAll = () => {
-    const filteredFlashcards = getFilteredFlashcards();
-    setSelectedFlashcards(
-      selectedFlashcards.length === filteredFlashcards.length
-        ? []
-        : filteredFlashcards.map((f) => f.id)
-    );
-  };
-
   const handleAnkiPush = async () => {
-    if (selectedFlashcards.length === 0) return;
-
-    // Determine which deck to use
-    const deckToUse = showNewDeckInput ? newDeckName.trim() : selectedDeck;
-
-    if (!deckToUse) {
-      alert("Please select a deck or enter a new deck name");
-      return;
-    }
-
-    setIsPushingToAnki(true);
+    if (!selectedDeck || selectedFlashcards.length === 0) return;
 
     try {
-      await pushToAnki(selectedFlashcards, deckToUse);
+      await pushToAnki(selectedFlashcards, selectedDeck);
       setSelectedFlashcards([]);
       setIsAnkiDialogOpen(false);
-      setShowNewDeckInput(false);
-      setNewDeckName("");
-      setSelectedDeck("");
-
-      // Refresh the deck list to include the new deck
-      await loadAnkiDecks();
-
       alert(
-        `Successfully pushed ${selectedFlashcards.length} flashcards to Anki deck "${deckToUse}"!`
+        `Successfully pushed ${selectedFlashcards.length} flashcards to Anki!`
       );
     } catch (err) {
       console.error("Error pushing to Anki:", err);
       alert(
         "Failed to push flashcards to Anki. Make sure Anki is running and AnkiConnect is installed."
       );
-    } finally {
-      setIsPushingToAnki(false);
     }
   };
 
@@ -180,20 +136,70 @@ const Flashcards: React.FC = () => {
     try {
       const decks = await getAnkiDecks();
       setAnkiDecks(decks);
+      if (decks.length > 0 && !selectedDeck) {
+        setSelectedDeck(decks[0]);
+      }
     } catch (err) {
       console.error("Error loading Anki decks:", err);
     }
   };
 
-  const getFilteredFlashcards = () => {
-    return flashcards.filter((flashcard) => {
-      if (filterType === "generated") return flashcard.is_generated;
-      if (filterType === "manual") return !flashcard.is_generated;
-      return true;
-    });
+  const handleSelectAll = () => {
+    if (selectedFlashcards.length === filteredFlashcards.length) {
+      setSelectedFlashcards([]);
+    } else {
+      setSelectedFlashcards(filteredFlashcards.map((card) => card.id));
+    }
   };
 
-  const filteredFlashcards = getFilteredFlashcards();
+  const handleToggleSelect = (id: number) => {
+    setSelectedFlashcards((prev) =>
+      prev.includes(id) ? prev.filter((_id) => _id !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedFlashcards.length === 0) {
+      alert("Please select flashcards to delete.");
+      return;
+    }
+    if (
+      window.confirm(
+        `Are you sure you want to delete ${selectedFlashcards.length} selected flashcards?`
+      )
+    ) {
+      try {
+        await bulkDeleteFlashcards(selectedFlashcards);
+        setSelectedFlashcards([]);
+        alert("Selected flashcards deleted successfully!");
+      } catch (err: any) {
+        alert(`Failed to delete selected flashcards: ${err.message}`);
+      }
+    }
+  };
+
+  const handleFilterClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setFilterAnchorEl(event.currentTarget);
+  };
+
+  const handleFilterClose = () => {
+    setFilterAnchorEl(null);
+  };
+
+  const handleFilterChange = (type: "all" | "generated" | "manual") => {
+    setFilterType(type);
+    handleFilterClose();
+  };
+
+  const filteredFlashcards = flashcards.filter((flashcard) => {
+    if (filterType === "generated") {
+      return flashcard.is_generated;
+    }
+    if (filterType === "manual") {
+      return !flashcard.is_generated;
+    }
+    return true;
+  });
 
   if (loading) {
     return (
@@ -212,13 +218,58 @@ const Flashcards: React.FC = () => {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box mb={3}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Flashcards
+      <Box
+        display="flex"
+        justifyContent="space-between"
+        alignItems="center"
+        mb={4}
+      >
+        <Typography variant="h4" component="h1">
+          Your Flashcards
         </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Manage and review your flashcards. Edit, delete, or push to Anki.
-        </Typography>
+        <Box>
+          <Button
+            variant="outlined"
+            startIcon={<FilterList />}
+            onClick={handleFilterClick}
+            sx={{ mr: 1 }}
+          >
+            Filter ({filterType})
+          </Button>
+          <Menu
+            anchorEl={filterAnchorEl}
+            open={Boolean(filterAnchorEl)}
+            onClose={handleFilterClose}
+          >
+            <MenuItem onClick={() => handleFilterChange("all")}>All</MenuItem>
+            <MenuItem onClick={() => handleFilterChange("generated")}>
+              AI Generated
+            </MenuItem>
+            <MenuItem onClick={() => handleFilterChange("manual")}>
+              Manual
+            </MenuItem>
+          </Menu>
+
+          <Button
+            variant="outlined"
+            startIcon={<SelectAll />}
+            onClick={handleSelectAll}
+            sx={{ mr: 1 }}
+          >
+            {selectedFlashcards.length === filteredFlashcards.length
+              ? "Deselect All"
+              : "Select All"}
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            startIcon={<Delete />}
+            onClick={handleBulkDelete}
+            disabled={selectedFlashcards.length === 0}
+          >
+            Delete Selected ({selectedFlashcards.length})
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -247,15 +298,11 @@ const Flashcards: React.FC = () => {
 
           <Button
             variant="outlined"
-            startIcon={
-              isPushingToAnki ? <CircularProgress size={20} /> : <School />
-            }
+            startIcon={<School />}
             onClick={() => setIsAnkiDialogOpen(true)}
-            disabled={selectedFlashcards.length === 0 || isPushingToAnki}
+            disabled={selectedFlashcards.length === 0}
           >
-            {isPushingToAnki
-              ? "Pushing..."
-              : `Push to Anki (${selectedFlashcards.length})`}
+            Push to Anki ({selectedFlashcards.length})
           </Button>
         </Box>
 
@@ -263,7 +310,7 @@ const Flashcards: React.FC = () => {
           <Button
             variant="outlined"
             startIcon={<FilterList />}
-            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+            onClick={handleFilterClick}
           >
             Filter:{" "}
             {filterType === "all"
@@ -272,57 +319,144 @@ const Flashcards: React.FC = () => {
               ? "AI Generated"
               : "Manual"}
           </Button>
-
-          <Button
-            variant="outlined"
-            startIcon={
-              selectedFlashcards.length === filteredFlashcards.length ? (
-                <Clear />
-              ) : (
-                <SelectAll />
-              )
-            }
-            onClick={handleSelectAll}
-            disabled={filteredFlashcards.length === 0}
-          >
-            {selectedFlashcards.length === filteredFlashcards.length
-              ? "Deselect All"
-              : "Select All"}
-          </Button>
         </Box>
       </Box>
 
-      {/* Filter Menu */}
-      <Menu
-        anchorEl={filterAnchorEl}
-        open={Boolean(filterAnchorEl)}
-        onClose={() => setFilterAnchorEl(null)}
+      {/* Anki Push Dialog */}
+      <Dialog
+        open={isAnkiDialogOpen}
+        onClose={() => setIsAnkiDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
       >
-        <MenuItem
-          onClick={() => {
-            setFilterType("all");
-            setFilterAnchorEl(null);
-          }}
-        >
-          All Flashcards
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            setFilterType("generated");
-            setFilterAnchorEl(null);
-          }}
-        >
-          AI Generated
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            setFilterType("manual");
-            setFilterAnchorEl(null);
-          }}
-        >
-          Manual
-        </MenuItem>
-      </Menu>
+        <DialogTitle>
+          Push to Anki
+          {ankiConnected === false && (
+            <Alert severity="warning" sx={{ mt: 1 }}>
+              Anki is not connected. Make sure Anki is running and AnkiConnect
+              is installed.
+            </Alert>
+          )}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Selected flashcards: {selectedFlashcards.length}
+          </Typography>
+          <FormControl fullWidth>
+            <InputLabel>Select Deck</InputLabel>
+            <Select
+              value={selectedDeck}
+              label="Select Deck"
+              onChange={(e) => setSelectedDeck(e.target.value)}
+              onOpen={loadAnkiDecks}
+            >
+              {ankiDecks.map((deck) => (
+                <MenuItem key={deck} value={deck}>
+                  {deck}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsAnkiDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleAnkiPush}
+            variant="contained"
+            disabled={!selectedDeck || selectedFlashcards.length === 0}
+          >
+            Push to Anki
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Create Flashcard Dialog */}
+      <Dialog
+        open={isCreateDialogOpen}
+        onClose={() => setIsCreateDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Create New Flashcard</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Question"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={createForm.question}
+            onChange={(e) =>
+              setCreateForm((prev) => ({ ...prev, question: e.target.value }))
+            }
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            margin="dense"
+            label="Answer"
+            type="text"
+            fullWidth
+            multiline
+            rows={4}
+            variant="outlined"
+            value={createForm.answer}
+            onChange={(e) =>
+              setCreateForm((prev) => ({ ...prev, answer: e.target.value }))
+            }
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleCreate} variant="contained">
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Flashcard Dialog */}
+      <Dialog
+        open={isEditDialogOpen}
+        onClose={() => setIsEditDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Edit Flashcard</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Question"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={editForm.question}
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, question: e.target.value }))
+            }
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            margin="dense"
+            label="Answer"
+            type="text"
+            fullWidth
+            multiline
+            rows={4}
+            variant="outlined"
+            value={editForm.answer}
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, answer: e.target.value }))
+            }
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleSaveEdit} variant="contained">
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Flashcards Grid */}
       <Box
@@ -337,49 +471,38 @@ const Flashcards: React.FC = () => {
                 height: "100%",
                 display: "flex",
                 flexDirection: "column",
-                border: selectedFlashcards.includes(flashcard.id)
-                  ? "2px solid"
-                  : "1px solid",
-                borderColor: selectedFlashcards.includes(flashcard.id)
-                  ? "primary.main"
-                  : "divider",
               }}
             >
               <CardContent sx={{ flexGrow: 1 }}>
                 <Box
                   display="flex"
                   justifyContent="space-between"
-                  alignItems="flex-start"
-                  mb={2}
+                  alignItems="center"
+                  mb={1}
                 >
-                  <Chip
-                    icon={flashcard.is_generated ? <AutoAwesome /> : <Add />}
-                    label={flashcard.is_generated ? "AI Generated" : "Manual"}
-                    color={flashcard.is_generated ? "primary" : "secondary"}
-                    size="small"
-                  />
+                  <Typography variant="subtitle2" color="text.secondary">
+                    {flashcard.is_generated ? "AI Generated" : "Manual"}
+                  </Typography>
                   <Checkbox
                     checked={selectedFlashcards.includes(flashcard.id)}
-                    onChange={() => handleSelectFlashcard(flashcard.id)}
+                    onChange={() => handleToggleSelect(flashcard.id)}
                     size="small"
                   />
                 </Box>
-
                 <Typography variant="h6" gutterBottom>
-                  Question:
+                  Q: {flashcard.question}
                 </Typography>
-                <Typography variant="body2" sx={{ mb: 2, minHeight: 40 }}>
-                  {flashcard.question}
+                <Typography variant="body1" color="text.secondary">
+                  A: {flashcard.answer}
                 </Typography>
-
-                <Typography variant="h6" gutterBottom>
-                  Answer:
-                </Typography>
-                <Typography variant="body2" sx={{ minHeight: 40 }}>
-                  {flashcard.answer}
-                </Typography>
+                {flashcard.note_title && (
+                  <Chip
+                    label={`From: ${flashcard.note_title}`}
+                    size="small"
+                    sx={{ mt: 1 }}
+                  />
+                )}
               </CardContent>
-
               <CardActions>
                 <Button
                   size="small"
@@ -407,203 +530,18 @@ const Flashcards: React.FC = () => {
           <Typography variant="h6" color="text.secondary">
             No flashcards found
           </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {filterType === "all"
-              ? "Create your first flashcard or add notes to generate them with AI."
-              : `No ${filterType} flashcards found. Try changing the filter.`}
+          <Typography variant="body2" color="text.secondary">
+            Start by adding notes and generating flashcards!
           </Typography>
+          <Button
+            variant="contained"
+            sx={{ mt: 2 }}
+            onClick={() => alert("Navigate to Add Notes page")}
+          >
+            Add Notes
+          </Button>
         </Box>
       )}
-
-      {/* Create Dialog */}
-      <Dialog
-        open={isCreateDialogOpen}
-        onClose={() => setIsCreateDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Create New Flashcard</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Question"
-            fullWidth
-            multiline
-            rows={3}
-            value={createForm.question}
-            onChange={(e) =>
-              setCreateForm({ ...createForm, question: e.target.value })
-            }
-            sx={{ mb: 2 }}
-          />
-          <TextField
-            margin="dense"
-            label="Answer"
-            fullWidth
-            multiline
-            rows={4}
-            value={createForm.answer}
-            onChange={(e) =>
-              setCreateForm({ ...createForm, answer: e.target.value })
-            }
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setIsCreateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreate} variant="contained">
-            Create
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Edit Dialog */}
-      <Dialog
-        open={isEditDialogOpen}
-        onClose={() => setIsEditDialogOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>Edit Flashcard</DialogTitle>
-        <DialogContent>
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Question"
-            fullWidth
-            multiline
-            rows={3}
-            value={editForm.question}
-            onChange={(e) =>
-              setEditForm({ ...editForm, question: e.target.value })
-            }
-            sx={{ mb: 2 }}
-          />
-          <TextField
-            margin="dense"
-            label="Answer"
-            fullWidth
-            multiline
-            rows={4}
-            value={editForm.answer}
-            onChange={(e) =>
-              setEditForm({ ...editForm, answer: e.target.value })
-            }
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleEditSubmit} variant="contained">
-            Save
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Anki Push Dialog */}
-      <Dialog
-        open={isAnkiDialogOpen}
-        onClose={() => {
-          setIsAnkiDialogOpen(false);
-          setShowNewDeckInput(false);
-          setNewDeckName("");
-          setIsPushingToAnki(false);
-        }}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          Push to Anki
-          {ankiConnected === false && (
-            <Alert severity="warning" sx={{ mt: 1 }}>
-              Anki is not connected. Make sure Anki is running and AnkiConnect
-              is installed.
-            </Alert>
-          )}
-        </DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" sx={{ mb: 2 }}>
-            Selected flashcards: {selectedFlashcards.length}
-          </Typography>
-          <FormControl fullWidth>
-            <InputLabel>Select Deck</InputLabel>
-            <Select
-              value={selectedDeck}
-              label="Select Deck"
-              onChange={(e) => {
-                const value = e.target.value;
-                if (value === "__CREATE_NEW__") {
-                  setShowNewDeckInput(true);
-                  setSelectedDeck("");
-                } else {
-                  setShowNewDeckInput(false);
-                  setSelectedDeck(value);
-                }
-              }}
-              onOpen={loadAnkiDecks}
-            >
-              {ankiDecks.map((deck) => (
-                <MenuItem key={deck} value={deck}>
-                  {deck}
-                </MenuItem>
-              ))}
-              <MenuItem
-                value="__CREATE_NEW__"
-                sx={{
-                  borderTop: "1px solid #e0e0e0",
-                  mt: 1,
-                  pt: 1,
-                  color: "primary.main",
-                  fontWeight: "bold",
-                }}
-              >
-                + Create New Deck
-              </MenuItem>
-            </Select>
-          </FormControl>
-
-          {showNewDeckInput && (
-            <TextField
-              fullWidth
-              label="New Deck Name"
-              value={newDeckName}
-              onChange={(e) => setNewDeckName(e.target.value)}
-              placeholder="Enter deck name..."
-              sx={{ mt: 2 }}
-              autoFocus
-            />
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setIsAnkiDialogOpen(false);
-              setShowNewDeckInput(false);
-              setNewDeckName("");
-              setIsPushingToAnki(false);
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleAnkiPush}
-            variant="contained"
-            disabled={
-              (!selectedDeck && !showNewDeckInput) ||
-              selectedFlashcards.length === 0 ||
-              isPushingToAnki
-            }
-            startIcon={
-              isPushingToAnki ? <CircularProgress size={20} /> : undefined
-            }
-          >
-            {isPushingToAnki
-              ? "Pushing to Anki..."
-              : showNewDeckInput
-              ? "Create Deck & Push"
-              : "Push to Anki"}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Container>
   );
 };

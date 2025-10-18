@@ -125,154 +125,141 @@ const pushToAnki = async (flashcards, deckName = "Default") => {
       console.warn("Could not check/create deck:", deckError.message);
     }
 
-    // Try smart batching for bulk push
-    try {
-      const notes = flashcards.map((flashcard) => ({
-        deckName: deckName,
-        modelName: "Basic",
-        fields: {
-          Front: flashcard.question,
-          Back: flashcard.answer,
-        },
-        tags: ["anki-flashcard-generator"],
-      }));
+    // Process flashcards individually for better reliability
+    const notes = flashcards.map((flashcard) => ({
+      deckName: deckName,
+      modelName: "Basic",
+      fields: {
+        Front: flashcard.question,
+        Back: flashcard.answer,
+      },
+      tags: ["anki-flashcard-generator"],
+    }));
 
-      // For more than 5 cards, use smaller batches
-      if (flashcards.length > 5) {
-        console.log(
-          `Using batch processing for ${flashcards.length} flashcards`
-        );
-        const batchSize = 3; // Smaller batches for better reliability
-        const results = [];
-        let totalSuccess = 0;
-        let totalFailed = 0;
-
-        for (let i = 0; i < notes.length; i += batchSize) {
-          const batch = notes.slice(i, i + batchSize);
-          try {
-            console.log(
-              `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
-                notes.length / batchSize
-              )} (${batch.length} cards)`
-            );
-            const batchResult = await makeAnkiRequest("addNotes", {
-              notes: batch,
-            });
-            const successful = batchResult.filter(
-              (noteId, index) => noteId !== null
-            );
-            const failed = batchResult.filter(
-              (noteId, index) => noteId === null
-            );
-
-            results.push(...successful);
-            totalSuccess += successful.length;
-            totalFailed += failed.length;
-
-            if (failed.length > 0) {
-              console.warn(
-                `Batch ${Math.floor(i / batchSize) + 1}: ${
-                  failed.length
-                } cards failed`
-              );
-            } else {
-              console.log(
-                `✅ Batch ${Math.floor(i / batchSize) + 1}: All ${
-                  batch.length
-                } cards added successfully`
-              );
-            }
-
-            // Small delay between batches
-            if (i + batchSize < notes.length) {
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-            }
-          } catch (batchError) {
-            console.error(
-              `Batch ${Math.floor(i / batchSize) + 1} failed:`,
-              batchError.message
-            );
-            totalFailed += batch.length;
-          }
-        }
-
-        return {
-          added: totalSuccess,
-          failed: totalFailed,
-          deckName: deckName,
-          noteIds: results,
-        };
-      } else {
-        // For 5 or fewer cards, try single bulk push
-        console.log(
-          `Using single bulk push for ${flashcards.length} flashcards`
-        );
-        const result = await makeAnkiRequest("addNotes", { notes });
-        const successfulNotes = result.filter(
-          (noteId, index) => noteId !== null
-        );
-        const failedNotes = result.filter((noteId, index) => noteId === null);
-
-        if (failedNotes.length > 0) {
-          console.warn(`${failedNotes.length} flashcards failed in bulk push`);
-        }
-
-        return {
-          added: successfulNotes.length,
-          failed: failedNotes.length,
-          deckName: deckName,
-          noteIds: successfulNotes,
-        };
-      }
-    } catch (bulkError) {
-      console.log("Bulk push failed, trying individual pushes...");
-
-      // Fallback: push one at a time
+    // For more than 3 cards, use individual processing with batching for efficiency
+    if (flashcards.length > 3) {
+      console.log(
+        `Using individual processing for ${flashcards.length} flashcards`
+      );
       const results = [];
-      let successCount = 0;
-      let failCount = 0;
+      let totalSuccess = 0;
+      let totalFailed = 0;
 
+      // Process cards individually but with small delays for efficiency
       for (let i = 0; i < flashcards.length; i++) {
-        try {
-          const flashcard = flashcards[i];
-          const note = {
-            deckName: deckName,
-            modelName: "Basic",
-            fields: {
-              Front: flashcard.question,
-              Back: flashcard.answer,
-            },
-            tags: ["anki-flashcard-generator"],
-          };
+        const flashcard = flashcards[i];
+        const note = {
+          deckName: deckName,
+          modelName: "Basic",
+          fields: {
+            Front: flashcard.question,
+            Back: flashcard.answer,
+          },
+          tags: ["anki-flashcard-generator"],
+        };
 
+        try {
           const result = await makeAnkiRequest("addNote", { note });
           if (result) {
             results.push(result);
-            successCount++;
+            totalSuccess++;
             console.log(
               `✅ Flashcard ${i + 1}/${flashcards.length} added successfully`
             );
           } else {
-            failCount++;
+            totalFailed++;
             console.log(`❌ Flashcard ${i + 1}/${flashcards.length} failed`);
           }
         } catch (cardError) {
-          failCount++;
-          console.error(
-            `❌ Flashcard ${i + 1}/${flashcards.length} failed:`,
-            cardError.message
-          );
+          // Check if it's a duplicate error - this is actually a success case
+          if (cardError.message.includes("duplicate")) {
+            totalSuccess++;
+            console.log(
+              `✅ Flashcard ${i + 1}/${
+                flashcards.length
+              } already exists in Anki (duplicate)`
+            );
+          } else {
+            totalFailed++;
+            console.error(
+              `❌ Flashcard ${i + 1}/${flashcards.length} failed:`,
+              cardError.message
+            );
+          }
         }
 
-        // Small delay between individual pushes
+        // Small delay between cards to avoid overwhelming Anki
         if (i < flashcards.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise((resolve) => setTimeout(resolve, 200));
         }
       }
 
       return {
-        added: successCount,
-        failed: failCount,
+        added: totalSuccess,
+        failed: totalFailed,
+        deckName: deckName,
+        noteIds: results,
+      };
+    } else {
+      // For 3 or fewer cards, use individual processing as well for consistency
+      console.log(
+        `Using individual processing for ${flashcards.length} flashcards`
+      );
+      const results = [];
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      for (let i = 0; i < flashcards.length; i++) {
+        const flashcard = flashcards[i];
+        const note = {
+          deckName: deckName,
+          modelName: "Basic",
+          fields: {
+            Front: flashcard.question,
+            Back: flashcard.answer,
+          },
+          tags: ["anki-flashcard-generator"],
+        };
+
+        try {
+          const result = await makeAnkiRequest("addNote", { note });
+          if (result) {
+            results.push(result);
+            totalSuccess++;
+            console.log(
+              `✅ Flashcard ${i + 1}/${flashcards.length} added successfully`
+            );
+          } else {
+            totalFailed++;
+            console.log(`❌ Flashcard ${i + 1}/${flashcards.length} failed`);
+          }
+        } catch (cardError) {
+          // Check if it's a duplicate error - this is actually a success case
+          if (cardError.message.includes("duplicate")) {
+            totalSuccess++;
+            console.log(
+              `✅ Flashcard ${i + 1}/${
+                flashcards.length
+              } already exists in Anki (duplicate)`
+            );
+          } else {
+            totalFailed++;
+            console.error(
+              `❌ Flashcard ${i + 1}/${flashcards.length} failed:`,
+              cardError.message
+            );
+          }
+        }
+
+        // Small delay between cards
+        if (i < flashcards.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+
+      return {
+        added: totalSuccess,
+        failed: totalFailed,
         deckName: deckName,
         noteIds: results,
       };

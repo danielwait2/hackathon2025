@@ -21,6 +21,7 @@ import {
   MenuItem,
   Checkbox,
   Menu,
+  Snackbar,
 } from "@mui/material";
 import {
   Edit,
@@ -67,6 +68,9 @@ const Flashcards: React.FC = () => {
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(
     null
   );
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
+  const [snackbarMessage, setSnackbarMessage] = useState("");
+  const [isPushingToAnki, setIsPushingToAnki] = useState(false);
 
   const checkAnkiStatus = useCallback(async () => {
     const connected = await checkAnkiConnection();
@@ -117,18 +121,24 @@ const Flashcards: React.FC = () => {
   const handleAnkiPush = async () => {
     if (!selectedDeck || selectedFlashcards.length === 0) return;
 
+    setIsPushingToAnki(true);
     try {
       await pushToAnki(selectedFlashcards, selectedDeck);
       setSelectedFlashcards([]);
       setIsAnkiDialogOpen(false);
-      alert(
-        `Successfully pushed ${selectedFlashcards.length} flashcards to Anki!`
+      setSnackbarMessage(
+        `✅ Successfully processed ${selectedFlashcards.length} flashcards to Anki! (Some may have been duplicates)`
       );
+      setSnackbarOpen(true);
     } catch (err) {
       console.error("Error pushing to Anki:", err);
-      alert(
-        "Failed to push flashcards to Anki. Make sure Anki is running and AnkiConnect is installed."
-      );
+      const errorMessage = (err as Error).message?.includes("duplicate")
+        ? "⚠️ Some flashcards already exist in Anki (duplicates). This is normal if you've added them before."
+        : "❌ Failed to push flashcards to Anki. Make sure Anki is running and AnkiConnect is installed.";
+      setSnackbarMessage(errorMessage);
+      setSnackbarOpen(true);
+    } finally {
+      setIsPushingToAnki(false);
     }
   };
 
@@ -298,11 +308,15 @@ const Flashcards: React.FC = () => {
 
           <Button
             variant="outlined"
-            startIcon={<School />}
+            startIcon={
+              isPushingToAnki ? <CircularProgress size={20} /> : <School />
+            }
             onClick={() => setIsAnkiDialogOpen(true)}
-            disabled={selectedFlashcards.length === 0}
+            disabled={selectedFlashcards.length === 0 || isPushingToAnki}
           >
-            Push to Anki ({selectedFlashcards.length})
+            {isPushingToAnki
+              ? "Pushing to Anki..."
+              : `Push to Anki (${selectedFlashcards.length})`}
           </Button>
         </Box>
 
@@ -363,9 +377,16 @@ const Flashcards: React.FC = () => {
           <Button
             onClick={handleAnkiPush}
             variant="contained"
-            disabled={!selectedDeck || selectedFlashcards.length === 0}
+            startIcon={
+              isPushingToAnki ? <CircularProgress size={20} /> : undefined
+            }
+            disabled={
+              !selectedDeck ||
+              selectedFlashcards.length === 0 ||
+              isPushingToAnki
+            }
           >
-            Push to Anki
+            {isPushingToAnki ? "Pushing to Anki..." : "Push to Anki"}
           </Button>
         </DialogActions>
       </Dialog>
@@ -542,6 +563,15 @@ const Flashcards: React.FC = () => {
           </Button>
         </Box>
       )}
+
+      {/* Snackbar for notifications */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={4000}
+        onClose={() => setSnackbarOpen(false)}
+        message={snackbarMessage}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
     </Container>
   );
 };

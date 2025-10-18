@@ -3,3 +3,6 @@
 .env
 *.env
 server/.env
+
+# local db files
+server/database/*.db
